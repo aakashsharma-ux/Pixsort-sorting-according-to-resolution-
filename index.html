@@ -1,0 +1,1070 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Pixsort — Image Resolution Manager</title>
+  <meta name="description" content="Sort images by resolution, auto-rename, flag low-quality, export as ZIP. 100% browser-based." />
+
+  <!-- Inline SVG favicon — no 404 request -->
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🖼️</text></svg>" />
+
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,600;0,700;1,600&family=Outfit:wght@300;400;500;600&display=swap" rel="stylesheet" />
+
+  <!-- JSZip (only CDN dependency) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+
+  <style>
+    /* ════════════════════════════════════════════════════════════
+       DESIGN TOKENS — all colours live here only
+    ════════════════════════════════════════════════════════════ */
+    :root {
+      --bg:         #F7F5F0;
+      --bg2:        #EDEAE3;
+      --bg3:        #ffffff;
+      --surface:    rgba(255,255,255,0.88);
+      --border:     rgba(0,0,0,0.08);
+      --border2:    rgba(0,0,0,0.14);
+      --text:       #1A1A1A;
+      --text2:      #5A5A5A;
+      --text3:      #9A9A9A;
+      --accent:     #C8A97E;
+      --accent2:    #A88A5E;
+      --danger-rgb: 224, 82, 82;
+      --danger:     rgb(var(--danger-rgb));
+      --danger-bg:  rgba(var(--danger-rgb), 0.08);
+      --success:    #3D9E3D;
+      --sh-sm:  0 1px 4px rgba(0,0,0,0.06), 0 2px 8px rgba(0,0,0,0.04);
+      --sh-md:  0 4px 16px rgba(0,0,0,0.08), 0 2px 6px rgba(0,0,0,0.04);
+      --sh-lg:  0 12px 40px rgba(0,0,0,0.12), 0 4px 12px rgba(0,0,0,0.06);
+      --r:      16px;
+      --r-sm:   10px;
+      --ease:   0.22s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    .dark {
+      --bg:         #111113;
+      --bg2:        #1A1A1E;
+      --bg3:        #222228;
+      --surface:    rgba(30,30,36,0.92);
+      --border:     rgba(255,255,255,0.07);
+      --border2:    rgba(255,255,255,0.13);
+      --text:       #F0EDE8;
+      --text2:      #A8A49E;
+      --text3:      #6A6660;
+      --danger-rgb: 240, 112, 112;
+      --danger:     rgb(var(--danger-rgb));
+      --danger-bg:  rgba(var(--danger-rgb), 0.10);
+      --success:    #6DCF6D;
+      --sh-sm:  0 1px 4px rgba(0,0,0,0.30), 0 2px 8px rgba(0,0,0,0.20);
+      --sh-md:  0 4px 16px rgba(0,0,0,0.40), 0 2px 6px rgba(0,0,0,0.20);
+      --sh-lg:  0 12px 40px rgba(0,0,0,0.50), 0 4px 12px rgba(0,0,0,0.30);
+    }
+
+    /* ════════════════════════════════════════════════════════════
+       RESET
+    ════════════════════════════════════════════════════════════ */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; }
+    body {
+      font-family: 'Outfit', system-ui, sans-serif;
+      background: var(--bg); color: var(--text);
+      transition: background 0.3s ease, color 0.3s ease, border-color 0.3s ease;
+      min-height: 100vh; overflow-x: hidden;
+    }
+    ::-webkit-scrollbar { width: 5px; }
+    ::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 3px; }
+    #app { min-height: 100vh; display: flex; flex-direction: column; }
+
+    /* ════════════════════════════════════════════════════════════
+       HEADER
+    ════════════════════════════════════════════════════════════ */
+    .hdr {
+      position: sticky; top: 0; z-index: 100;
+      height: 66px; padding: 0 32px;
+      display: flex; align-items: center; justify-content: space-between;
+      background: var(--surface);
+      backdrop-filter: blur(20px) saturate(1.5);
+      -webkit-backdrop-filter: blur(20px) saturate(1.5);
+      border-bottom: 1px solid var(--border);
+      transition: background var(--ease), border-color var(--ease);
+    }
+    .logo { display: flex; align-items: center; gap: 10px; }
+    .logo-mark {
+      width: 34px; height: 34px; border-radius: 9px; flex-shrink: 0;
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      display: flex; align-items: center; justify-content: center;
+      box-shadow: 0 2px 10px rgba(200,169,126,0.4);
+    }
+    .logo-mark svg { width: 18px; height: 18px; fill: white; }
+    .logo-text { font-family: 'Playfair Display', serif; font-size: 22px; font-weight: 700; letter-spacing: -.3px; color: var(--text); }
+    .logo-text span { color: var(--accent); }
+    .hdr-right { display: flex; align-items: center; gap: 10px; }
+    .img-count { padding: 4px 12px; border-radius: 20px; background: var(--bg2); border: 1px solid var(--border); font-size: 12px; font-weight: 500; color: var(--text2); display: none; }
+    .img-count.visible { display: inline-flex; }
+    .theme-btn {
+      display: flex; align-items: center; gap: 7px; padding: 6px 14px; border-radius: 20px;
+      background: var(--bg2); border: 1px solid var(--border2); cursor: pointer;
+      font-size: 13px; font-weight: 500; color: var(--text2); font-family: 'Outfit', sans-serif;
+      transition: color var(--ease), border-color var(--ease), background var(--ease);
+    }
+    .theme-btn:hover { color: var(--text); border-color: var(--accent); }
+    .theme-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+    .theme-btn svg { width: 14px; height: 14px; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+
+    /* ════════════════════════════════════════════════════════════
+       LAYOUT
+    ════════════════════════════════════════════════════════════ */
+    .main { flex: 1; padding: 40px 32px; max-width: 1440px; margin: 0 auto; width: 100%; }
+
+    /* ════════════════════════════════════════════════════════════
+       PHASE: UPLOAD
+       FIX #1 — shown only before any images are loaded
+    ════════════════════════════════════════════════════════════ */
+    #uploadState { animation: fadeUp .5s ease both; }
+    #editState   { animation: fadeUp .4s ease both; display: none; }
+    #editState.active { display: block; }
+
+    .hero { text-align: center; padding: 48px 0 40px; }
+    .hero h1 {
+      font-family: 'Playfair Display', serif;
+      font-size: clamp(34px, 5vw, 56px); font-weight: 700;
+      line-height: 1.15; letter-spacing: -1px; color: var(--text); margin-bottom: 16px;
+    }
+    .hero h1 em { color: var(--accent); font-style: italic; }
+    .hero p { font-size: 15px; color: var(--text2); max-width: 460px; margin: 0 auto; line-height: 1.7; }
+
+    /* Drop Zone — FIX #1: only exists in upload phase */
+    .dz {
+      border: 2px dashed var(--border2); border-radius: var(--r); padding: 56px 32px;
+      text-align: center; cursor: pointer; position: relative; overflow: hidden;
+      background: var(--bg3); box-shadow: var(--sh-sm);
+      transition: border-color var(--ease), background var(--ease), transform var(--ease), box-shadow var(--ease);
+    }
+    .dz::before {
+      content: ''; position: absolute; inset: 0; pointer-events: none;
+      background: radial-gradient(ellipse at 50% 0%, rgba(200,169,126,0.07) 0%, transparent 65%);
+    }
+    .dz:hover, .dz.over {
+      border-color: var(--accent); background: rgba(200,169,126,0.03);
+      transform: scale(1.003); box-shadow: var(--sh-md), 0 0 0 5px rgba(200,169,126,0.1);
+    }
+    .dz.over { box-shadow: var(--sh-lg), 0 0 0 7px rgba(200,169,126,0.15); }
+    .dz:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+    .dz-icon {
+      width: 66px; height: 66px; margin: 0 auto 20px; border-radius: 18px;
+      background: linear-gradient(135deg, var(--bg2), var(--bg)); border: 1px solid var(--border2);
+      display: flex; align-items: center; justify-content: center; box-shadow: var(--sh-sm);
+      transition: transform var(--ease), border-color var(--ease), background var(--ease);
+    }
+    .dz.over .dz-icon { transform: translateY(-5px) scale(1.1); border-color: var(--accent); background: rgba(200,169,126,0.08); }
+    .dz-icon svg { width: 28px; height: 28px; stroke: var(--accent); fill: none; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+    .dz h2 { font-family: 'Playfair Display', serif; font-size: 22px; font-weight: 600; color: var(--text); margin-bottom: 8px; }
+    .dz p { font-size: 14px; color: var(--text2); margin-bottom: 26px; line-height: 1.65; }
+    .dz-btns { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+    .fmt-chips { margin-top: 20px; display: flex; align-items: center; justify-content: center; gap: 8px; }
+    .fmt-chip { padding: 3px 10px; border-radius: 20px; background: var(--bg2); border: 1px solid var(--border); font-size: 10.5px; font-weight: 600; letter-spacing: .6px; text-transform: uppercase; color: var(--text3); }
+
+    /* ════════════════════════════════════════════════════════════
+       BUTTONS
+    ════════════════════════════════════════════════════════════ */
+    .btn {
+      display: inline-flex; align-items: center; gap: 7px; padding: 10px 20px; border-radius: var(--r-sm);
+      font-family: 'Outfit', sans-serif; font-size: 14px; font-weight: 500;
+      cursor: pointer; border: none; outline: none; white-space: nowrap;
+      transition: transform var(--ease), box-shadow var(--ease), opacity var(--ease), background var(--ease), border-color var(--ease); line-height: 1;
+    }
+    .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+    .btn svg { width: 15px; height: 15px; flex-shrink: 0; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+    .btn:disabled { opacity: .42; cursor: not-allowed; transform: none !important; }
+    .btn-sm { padding: 7px 14px; font-size: 12.5px; border-radius: 8px; }
+    .btn-primary { background: var(--text); color: var(--bg); box-shadow: var(--sh-sm); }
+    .btn-primary:hover:not(:disabled) { opacity: .88; transform: translateY(-1px); box-shadow: var(--sh-md); }
+    .btn-secondary { background: var(--bg2); color: var(--text); border: 1px solid var(--border2); }
+    .btn-secondary:hover:not(:disabled) { border-color: var(--accent); transform: translateY(-1px); }
+    .btn-accent { background: linear-gradient(135deg, var(--accent), var(--accent2)); color: #fff; box-shadow: 0 4px 14px rgba(200,169,126,0.32); }
+    .btn-accent:hover:not(:disabled) { transform: translateY(-2px); box-shadow: 0 6px 22px rgba(200,169,126,0.42); }
+    .btn-danger { background: var(--danger-bg); color: var(--danger); border: 1px solid rgba(var(--danger-rgb), 0.22); }
+    .btn-danger:hover:not(:disabled) { background: rgba(var(--danger-rgb), 0.16); transform: translateY(-1px); }
+    .btn-spinner { display: inline-block; width: 14px; height: 14px; border-radius: 50%; border: 2px solid rgba(255,255,255,0.28); border-top-color: #fff; animation: spin .7s linear infinite; flex-shrink: 0; }
+
+    /* ════════════════════════════════════════════════════════════
+       PHASE: EDIT
+    ════════════════════════════════════════════════════════════ */
+    .toolbar {
+      display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap;
+      gap: 12px; padding: 18px 22px; margin-bottom: 24px;
+      background: var(--bg3); border: 1px solid var(--border); border-radius: var(--r); box-shadow: var(--sh-sm);
+    }
+    .tl-left, .tl-right { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .stat-pill { display: flex; align-items: center; gap: 6px; padding: 5px 12px; border-radius: 20px; background: var(--bg2); border: 1px solid var(--border); font-size: 12.5px; color: var(--text2); }
+    .stat-pill strong { color: var(--text); }
+    .dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+    .dot-green { background: var(--success); }
+    .dot-red   { background: var(--danger); }
+    .sort-pill { display: flex; align-items: center; gap: 7px; padding: 5px 12px; border-radius: 10px; font-size: 12.5px; color: var(--text2); background: rgba(200,169,126,0.07); border: 1px solid rgba(200,169,126,0.2); }
+    .sort-pill svg { width: 13px; height: 13px; stroke: var(--accent); fill: none; stroke-width: 1.8; stroke-linecap: round; }
+    .filter-btn { display: flex; align-items: center; gap: 7px; padding: 7px 14px; border-radius: 20px; cursor: pointer; font-size: 13px; font-weight: 500; font-family: 'Outfit', sans-serif; transition: color var(--ease), border-color var(--ease), background var(--ease); border: 1px solid var(--border); background: var(--bg2); color: var(--text2); }
+    .filter-btn svg { width: 14px; height: 14px; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+    .filter-btn:hover { border-color: var(--danger); color: var(--danger); }
+    .filter-btn.active { background: var(--danger-bg); border-color: var(--danger); color: var(--danger); }
+    .filter-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+
+    /* ════════════════════════════════════════════════════════════
+       GRID
+    ════════════════════════════════════════════════════════════ */
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 20px; }
+
+    /* ════════════════════════════════════════════════════════════
+       CARD
+       FIX #2 — cursor:grab shows it's reorderable, not uploadable
+    ════════════════════════════════════════════════════════════ */
+    .card {
+      background: var(--bg3); border-radius: var(--r); border: 1px solid var(--border);
+      box-shadow: var(--sh-sm); overflow: hidden;
+      transition: transform var(--ease), box-shadow var(--ease), border-color var(--ease);
+      animation: cardIn .4s ease both;
+      cursor: grab; user-select: none;
+    }
+    .card:hover { transform: translateY(-3px); box-shadow: var(--sh-md); border-color: var(--border2); }
+    .card.low-res { border-color: rgba(var(--danger-rgb), 0.32); }
+    .card.low-res:hover { border-color: var(--danger); box-shadow: var(--sh-md), 0 0 0 3px rgba(var(--danger-rgb), 0.12); }
+    /* FIX #2 — drag state visual feedback */
+    .card.is-dragging { opacity: 0.35; cursor: grabbing; transform: scale(0.96); }
+    .card.drag-over-top    { border-top: 3px solid var(--accent); }
+    .card.drag-over-bottom { border-bottom: 3px solid var(--accent); }
+
+    .card-thumb { width: 100%; aspect-ratio: 4/3; overflow: hidden; background: var(--bg2); position: relative; }
+    .card-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; transition: transform .4s ease; pointer-events: none; }
+    .card:hover .card-thumb img { transform: scale(1.05); }
+    .card-num { position: absolute; top: 9px; left: 9px; z-index: 2; min-width: 30px; height: 30px; padding: 0 8px; border-radius: 7px; background: rgba(0,0,0,0.55); backdrop-filter: blur(8px); display: flex; align-items: center; justify-content: center; font-family: 'Playfair Display', serif; font-size: 13px; font-weight: 600; color: #fff; }
+    .badge-low { position: absolute; top: 9px; right: 9px; z-index: 2; background: var(--danger); color: #fff; font-size: 10px; font-weight: 700; letter-spacing: .3px; padding: 3px 8px; border-radius: 6px; display: flex; align-items: center; gap: 4px; transition: background var(--ease); }
+    .badge-low svg { width: 10px; height: 10px; stroke: #fff; fill: none; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; }
+    .card-body { padding: 12px 14px 14px; }
+    /* FIX #3 — card name shows only the number, no extension ever */
+    .card-name { font-family: 'Playfair Display', serif; font-size: 22px; font-weight: 700; color: var(--text); margin-bottom: 4px; line-height: 1; }
+    .card-res { font-size: 12px; color: var(--text3); margin-bottom: 8px; }
+    .card-res strong { color: var(--text2); font-weight: 500; }
+    .card-warn { color: var(--danger); font-size: 11.5px; font-weight: 600; margin-left: 6px; transition: color var(--ease); }
+    .card-foot { display: flex; align-items: center; justify-content: space-between; }
+    .card-fmt { padding: 2px 7px; border-radius: 5px; font-size: 10px; font-weight: 600; letter-spacing: .5px; text-transform: uppercase; background: var(--bg2); border: 1px solid var(--border); color: var(--text2); }
+    .card-size { font-size: 11px; color: var(--text3); }
+
+    /* Reorder hint */
+    .reorder-hint { grid-column: 1/-1; display: flex; align-items: center; justify-content: center; gap: 8px; padding: 10px 16px; border-radius: 10px; background: rgba(200,169,126,0.06); border: 1px dashed rgba(200,169,126,0.25); font-size: 12.5px; color: var(--text2); animation: fadeIn .5s .3s ease both; }
+    .reorder-hint svg { width: 14px; height: 14px; stroke: var(--accent); fill: none; stroke-width: 1.8; stroke-linecap: round; }
+
+    /* Add-more tile */
+    .add-tile { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; border: 1.5px dashed var(--border2); border-radius: var(--r); min-height: 190px; cursor: pointer; transition: border-color var(--ease), color var(--ease), background var(--ease); background: transparent; color: var(--text2); font-size: 13px; font-weight: 500; font-family: 'Outfit', sans-serif; animation: cardIn .4s ease both; }
+    .add-tile:hover { border-color: var(--accent); color: var(--accent); background: rgba(200,169,126,0.03); }
+    .add-tile:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+    .add-tile-icon { width: 40px; height: 40px; border-radius: 12px; background: var(--bg2); border: 1px solid var(--border); display: flex; align-items: center; justify-content: center; }
+    .add-tile-icon svg { width: 18px; height: 18px; stroke: var(--accent); fill: none; stroke-width: 1.8; stroke-linecap: round; }
+
+    /* Show more */
+    .show-more { text-align: center; margin-top: 30px; }
+
+    /* Empty state */
+    .empty { text-align: center; padding: 80px 24px; grid-column: 1/-1; animation: fadeUp .5s ease both; }
+    .empty-icon { width: 80px; height: 80px; margin: 0 auto 22px; border-radius: 24px; background: var(--bg2); border: 1px solid var(--border); display: flex; align-items: center; justify-content: center; }
+    .empty-icon svg { width: 36px; height: 36px; stroke: var(--text3); fill: none; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+    .empty h3 { font-family: 'Playfair Display', serif; font-size: 26px; font-weight: 600; color: var(--text); margin-bottom: 10px; }
+    .empty p { font-size: 15px; color: var(--text2); line-height: 1.65; }
+
+    /* ════════════════════════════════════════════════════════════
+       OVERLAY
+    ════════════════════════════════════════════════════════════ */
+    .overlay { position: fixed; inset: 0; z-index: 200; background: rgba(0,0,0,0.38); backdrop-filter: blur(5px); display: none; align-items: center; justify-content: center; animation: fadeIn .2s ease; }
+    .overlay.show { display: flex; }
+    .overlay-card { background: var(--bg3); border: 1px solid var(--border); border-radius: 22px; padding: 40px 48px; text-align: center; box-shadow: var(--sh-lg); min-width: 300px; max-width: 90vw; }
+    .spinner { width: 44px; height: 44px; margin: 0 auto 20px; border-radius: 50%; border: 3px solid var(--border2); border-top-color: var(--accent); animation: spin .8s linear infinite; }
+    .overlay-card h3 { font-family: 'Playfair Display', serif; font-size: 20px; font-weight: 600; color: var(--text); margin-bottom: 6px; }
+    .overlay-card p { font-size: 14px; color: var(--text2); margin-bottom: 20px; }
+    .prog-bar { background: var(--bg2); border-radius: 20px; height: 5px; overflow: hidden; }
+    .prog-fill { height: 100%; background: linear-gradient(90deg, var(--accent), var(--accent2)); border-radius: 20px; transition: width .2s ease; width: 0%; }
+    .prog-count { font-size: 13px; color: var(--text3); margin-top: 10px; margin-bottom: 0; }
+
+    /* ════════════════════════════════════════════════════════════
+       DRAG OVERLAY — FIX #1: only visible in UPLOAD phase
+    ════════════════════════════════════════════════════════════ */
+    .drag-overlay { position: fixed; inset: 14px; z-index: 150; border: 3px dashed var(--accent); border-radius: 22px; background: rgba(200,169,126,0.04); display: none; align-items: center; justify-content: center; pointer-events: none; animation: fadeIn .15s ease; }
+    .drag-overlay.show { display: flex; }
+    .drag-inner { background: var(--bg3); border-radius: 18px; padding: 30px 44px; text-align: center; box-shadow: var(--sh-lg); }
+    .drag-emoji { font-size: 46px; margin-bottom: 12px; }
+    .drag-inner h3 { font-family: 'Playfair Display', serif; font-size: 22px; font-weight: 700; color: var(--text); margin-bottom: 6px; }
+    .drag-inner p { font-size: 14px; color: var(--text2); margin-bottom: 0; }
+
+    /* ════════════════════════════════════════════════════════════
+       TOAST
+    ════════════════════════════════════════════════════════════ */
+    .toast { position: fixed; bottom: 22px; right: 22px; z-index: 300; background: var(--text); color: var(--bg); padding: 13px 18px; border-radius: 12px; font-size: 14px; font-weight: 500; box-shadow: var(--sh-lg); display: none; align-items: center; gap: 10px; max-width: 360px; font-family: 'Outfit', sans-serif; }
+    .toast.show { display: flex; animation: slideUp .3s cubic-bezier(0.34,1.56,0.64,1) both; }
+    .toast svg { width: 17px; height: 17px; flex-shrink: 0; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+    .t-success { color: var(--success); }
+    .t-error   { color: var(--danger); }
+    .t-info    { color: var(--accent); }
+
+    /* ════════════════════════════════════════════════════════════
+       FOOTER
+    ════════════════════════════════════════════════════════════ */
+    .footer { padding: 18px 32px; text-align: center; font-size: 12px; color: var(--text3); border-top: 1px solid var(--border); background: var(--bg); margin-top: auto; }
+
+    /* ════════════════════════════════════════════════════════════
+       ANIMATIONS
+    ════════════════════════════════════════════════════════════ */
+    @keyframes fadeUp  { from { opacity:0; transform:translateY(16px); } to { opacity:1; transform:translateY(0); } }
+    @keyframes fadeIn  { from { opacity:0; } to { opacity:1; } }
+    @keyframes cardIn  { from { opacity:0; transform:scale(0.93) translateY(8px); } to { opacity:1; transform:scale(1) translateY(0); } }
+    @keyframes slideUp { from { opacity:0; transform:translateY(18px); } to { opacity:1; transform:translateY(0); } }
+    @keyframes spin    { to { transform:rotate(360deg); } }
+
+    .grid > .card:nth-child(2)  { animation-delay:.03s }
+    .grid > .card:nth-child(3)  { animation-delay:.06s }
+    .grid > .card:nth-child(4)  { animation-delay:.09s }
+    .grid > .card:nth-child(5)  { animation-delay:.12s }
+    .grid > .card:nth-child(6)  { animation-delay:.14s }
+    .grid > .card:nth-child(n+7){ animation-delay:.16s }
+
+    /* ════════════════════════════════════════════════════════════
+       RESPONSIVE
+    ════════════════════════════════════════════════════════════ */
+    @media (max-width: 640px) {
+      .hdr     { padding: 0 16px; }
+      .main    { padding: 24px 14px; }
+      .hero    { padding: 30px 0 24px; }
+      .dz      { padding: 40px 18px; }
+      .grid    { grid-template-columns: repeat(auto-fill, minmax(155px, 1fr)); gap: 12px; }
+      .toolbar { padding: 14px 16px; }
+      .overlay-card { padding: 32px 24px; }
+      .sort-pill { display: none; }
+    }
+  </style>
+</head>
+<body>
+
+<noscript>
+  <div style="text-align:center;padding:80px 24px;font-family:sans-serif;">
+    <div style="font-size:48px;margin-bottom:16px;">🖼️</div>
+    <h2 style="font-size:22px;margin-bottom:10px;">Pixsort requires JavaScript</h2>
+    <p style="font-size:15px;color:#555;">Please enable JavaScript to use this app.</p>
+  </div>
+</noscript>
+
+<div id="app">
+
+  <!-- HEADER -->
+  <header class="hdr">
+    <div class="logo">
+      <div class="logo-mark">
+        <svg viewBox="0 0 24 24"><path d="M20 5H4C2.9 5 2 5.9 2 7v10c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm-1 11H5c-.55 0-1-.45-1-1V8c0-.55.45-1 1-1h14c.55 0 1 .45 1 1v7c0 .55-.45 1-1 1zm-7-9a4 4 0 1 0 0 8 4 4 0 0 0 0-8zm0 6a2 2 0 1 1 0-4 2 2 0 0 1 0 4z"/></svg>
+      </div>
+      <span class="logo-text">Pix<span>sort</span></span>
+    </div>
+    <div class="hdr-right">
+      <span class="img-count" id="imgCount" aria-live="polite"></span>
+      <button class="theme-btn" id="themeBtn" aria-label="Toggle dark mode">
+        <svg id="iconMoon" viewBox="0 0 24 24"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+        <svg id="iconSun"  viewBox="0 0 24 24" style="display:none"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+        <span id="themeLbl">Dark</span>
+      </button>
+    </div>
+  </header>
+
+  <main class="main">
+
+    <!-- ══ UPLOAD PHASE ══════════════════════════════════════════
+         FIX #1 — hidden entirely once images are loaded
+    ════════════════════════════════════════════════════════════ -->
+    <section id="uploadState">
+      <div class="hero">
+        <h1>Sort & Rename by <em>Resolution</em></h1>
+        <p>Drop your images and Pixsort will auto-sort by resolution, rename sequentially, and flag low-quality ones — all in your browser.</p>
+      </div>
+
+      <div id="dropZone" class="dz" tabindex="0" role="button"
+           aria-label="Upload images: drag and drop here or press Enter to browse">
+        <div class="dz-icon">
+          <svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+        </div>
+        <h2>Drop images here</h2>
+        <p>Drag &amp; drop images or entire folders<br>Supports JPG, PNG, and WEBP</p>
+        <div class="dz-btns" id="dzBtns">
+          <button class="btn btn-primary" id="chooseFilesBtn" type="button">
+            <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+            Choose Files
+          </button>
+          <button class="btn btn-secondary" id="chooseFolderBtn" type="button">
+            <svg viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+            Upload Folder
+          </button>
+        </div>
+        <div class="fmt-chips">
+          <span class="fmt-chip">JPG</span>
+          <span class="fmt-chip">PNG</span>
+          <span class="fmt-chip">WEBP</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ══ EDIT PHASE ════════════════════════════════════════════
+         FIX #1 — shown only after images are loaded
+         FIX #2 — drag inside grid = reorder only, never re-upload
+    ════════════════════════════════════════════════════════════ -->
+    <section id="editState">
+
+      <div class="toolbar">
+        <div class="tl-left">
+          <div class="stat-pill">
+            <span class="dot dot-green"></span>
+            <strong id="totalCount">0</strong>&nbsp;total
+          </div>
+          <div class="stat-pill" id="lowResStat" style="display:none">
+            <span class="dot dot-red"></span>
+            <strong id="lowResCount">0</strong>&nbsp;low-res
+          </div>
+          <div class="sort-pill">
+            <svg viewBox="0 0 24 24"><line x1="21" y1="10" x2="7" y2="10"/><line x1="21" y1="6" x2="3" y2="6"/><line x1="21" y1="14" x2="3" y2="14"/><line x1="21" y1="18" x2="7" y2="18"/></svg>
+            Sorted by resolution · drag to reorder
+          </div>
+        </div>
+        <div class="tl-right">
+          <button class="filter-btn" id="filterBtn" style="display:none" aria-pressed="false">
+            <svg viewBox="0 0 24 24"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
+            <span id="filterLbl">Low Res Only</span>
+          </button>
+          <button class="btn btn-secondary btn-sm" id="addMoreBtn" type="button">
+            <svg viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            Add More
+          </button>
+          <button class="btn btn-accent btn-sm" id="exportBtn" type="button">
+            <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Download ZIP
+          </button>
+          <button class="btn btn-danger btn-sm" id="clearBtn" type="button">
+            <svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+            Clear
+          </button>
+        </div>
+      </div>
+
+      <div class="grid" id="imageGrid"></div>
+
+      <div class="show-more" id="showMoreWrap" style="display:none">
+        <button class="btn btn-secondary" id="showMoreBtn" type="button">
+          Show all <span id="showMoreCount"></span> images
+        </button>
+      </div>
+
+    </section>
+
+  </main>
+
+  <footer class="footer">
+    Pixsort · Auto-sort &amp; rename by resolution · No file extensions in export · 100% browser-based
+  </footer>
+</div>
+
+<!-- Processing overlay -->
+<div class="overlay" id="overlay" role="dialog" aria-modal="true" aria-label="Processing">
+  <div class="overlay-card">
+    <div class="spinner"></div>
+    <h3 id="overlayTitle">Processing Images</h3>
+    <p id="overlayMsg">Reading files…</p>
+    <div class="prog-bar"><div class="prog-fill" id="progFill"></div></div>
+    <p class="prog-count" id="progCount"></p>
+  </div>
+</div>
+
+<!-- FIX #1 — drag overlay only shown in UPLOAD phase -->
+<div class="drag-overlay" id="dragOverlay" aria-hidden="true">
+  <div class="drag-inner">
+    <div class="drag-emoji">🖼️</div>
+    <h3>Drop to upload</h3>
+    <p>Images and folders accepted</p>
+  </div>
+</div>
+
+<!-- Toast -->
+<div class="toast" id="toast" role="alert" aria-live="assertive"></div>
+
+<!-- Hidden file inputs -->
+<input type="file" id="fileInput"   multiple accept=".jpg,.jpeg,.png,.webp" style="display:none" aria-hidden="true" />
+<input type="file" id="folderInput" webkitdirectory directory multiple     style="display:none" aria-hidden="true" />
+
+<script>
+/* ════════════════════════════════════════════════════════════════════════════
+   PIXSORT — browser-only, single file, no build step needed
+   
+   STATE MACHINE (FIX #1):
+     UPLOAD → drop zone visible, global drag ACTIVE
+     EDIT   → drop zone hidden, global drag DISABLED
+              card drag = reorder only (FIX #2)
+
+   FIX #3 — ZIP filenames: "1", "2", "3" (no extensions)
+   FIX #4 — auto-sort by resolution immediately after upload
+════════════════════════════════════════════════════════════════════════════ */
+'use strict';
+
+/* ── Constants ─────────────────────────────────────────────────────────── */
+const ACCEPTED   = new Set(['jpg','jpeg','png','webp']);
+const LOW_PX     = 380;
+const PAGE_SIZE  = 50;
+
+/* ── State ─────────────────────────────────────────────────────────────── */
+const S = {
+  images:     [],   // [{id,name,fmt,size,w,h,res,isLow,dataUrl,file}]
+  filtered:   [],
+  filterLow:  false,
+  showAll:    false,
+  phase:      'UPLOAD',  // 'UPLOAD' | 'EDIT'
+};
+
+/* ── DOM ───────────────────────────────────────────────────────────────── */
+const el = id => document.getElementById(id);
+const D  = {
+  uploadState: el('uploadState'),
+  editState:   el('editState'),
+  dropZone:    el('dropZone'),
+  grid:        el('imageGrid'),
+  totalCount:  el('totalCount'),
+  lowResCount: el('lowResCount'),
+  lowResStat:  el('lowResStat'),
+  filterBtn:   el('filterBtn'),
+  filterLbl:   el('filterLbl'),
+  addMoreBtn:  el('addMoreBtn'),
+  exportBtn:   el('exportBtn'),
+  clearBtn:    el('clearBtn'),
+  showMoreWrap:el('showMoreWrap'),
+  showMoreBtn: el('showMoreBtn'),
+  showMoreCount:el('showMoreCount'),
+  imgCount:    el('imgCount'),
+  themeBtn:    el('themeBtn'),
+  themeLbl:    el('themeLbl'),
+  iconMoon:    el('iconMoon'),
+  iconSun:     el('iconSun'),
+  overlay:     el('overlay'),
+  overlayTitle:el('overlayTitle'),
+  overlayMsg:  el('overlayMsg'),
+  progFill:    el('progFill'),
+  progCount:   el('progCount'),
+  dragOverlay: el('dragOverlay'),
+  toast:       el('toast'),
+  fileInput:   el('fileInput'),
+  folderInput: el('folderInput'),
+};
+
+/* ════════════════════════════════════════════════════════════════════════
+   THEME
+════════════════════════════════════════════════════════════════════════ */
+function initTheme() {
+  let dark;
+  try { dark = localStorage.getItem('px-theme') === 'dark'; }
+  catch { dark = window.matchMedia('(prefers-color-scheme: dark)').matches; }
+  applyTheme(dark, false);
+}
+function applyTheme(dark, save=true) {
+  document.documentElement.classList.toggle('dark', dark);
+  D.themeLbl.textContent = dark ? 'Light' : 'Dark';
+  D.iconMoon.style.display = dark ? 'none'  : '';
+  D.iconSun.style.display  = dark ? ''      : 'none';
+  if (save) try { localStorage.setItem('px-theme', dark ? 'dark' : 'light'); } catch {}
+}
+D.themeBtn.addEventListener('click', () =>
+  applyTheme(!document.documentElement.classList.contains('dark'))
+);
+
+/* ════════════════════════════════════════════════════════════════════════
+   PHASE MANAGEMENT  (FIX #1)
+════════════════════════════════════════════════════════════════════════ */
+function setPhase(phase) {
+  S.phase = phase;
+  if (phase === 'UPLOAD') {
+    D.uploadState.style.display = '';
+    D.editState.classList.remove('active');
+    D.imgCount.classList.remove('visible');
+    enableGlobalDrop();
+  } else {
+    D.uploadState.style.display = 'none';
+    D.editState.classList.add('active');
+    D.imgCount.classList.add('visible');
+    disableGlobalDrop();   // FIX #1: no more upload via drag in EDIT phase
+  }
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   GLOBAL DRAG-AND-DROP  (UPLOAD phase only — FIX #1)
+════════════════════════════════════════════════════════════════════════ */
+let dragCount = 0;
+let globalDropOn = false;
+
+const onGlobalEnter = e => { e.preventDefault(); dragCount++; D.dragOverlay.classList.add('show'); };
+const onGlobalLeave = e => { e.preventDefault(); if (--dragCount <= 0) { dragCount = 0; D.dragOverlay.classList.remove('show'); } };
+const onGlobalOver  = e => e.preventDefault();
+const onGlobalDrop  = async e => {
+  e.preventDefault(); dragCount = 0; D.dragOverlay.classList.remove('show');
+  const files = await extractDrop(e.dataTransfer);
+  if (files.length) ingestFiles(files);
+};
+
+function enableGlobalDrop() {
+  if (globalDropOn) return;
+  document.addEventListener('dragenter', onGlobalEnter);
+  document.addEventListener('dragleave', onGlobalLeave);
+  document.addEventListener('dragover',  onGlobalOver);
+  document.addEventListener('drop',      onGlobalDrop);
+  globalDropOn = true;
+}
+function disableGlobalDrop() {
+  document.removeEventListener('dragenter', onGlobalEnter);
+  document.removeEventListener('dragleave', onGlobalLeave);
+  document.removeEventListener('dragover',  onGlobalOver);
+  document.removeEventListener('drop',      onGlobalDrop);
+  dragCount = 0;
+  D.dragOverlay.classList.remove('show');
+  globalDropOn = false;
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   FILE EXTRACTION (folder drops)
+════════════════════════════════════════════════════════════════════════ */
+function readDirEntry(entry, acc) {
+  return new Promise(res => {
+    const reader = entry.createReader();
+    const go = () => reader.readEntries(async entries => {
+      if (!entries.length) return res();
+      await Promise.all(entries.map(e =>
+        e.isDirectory ? readDirEntry(e, acc)
+        : new Promise(r => e.file(f => { acc.push(f); r(); }, r))
+      ));
+      go();
+    }, res);
+    go();
+  });
+}
+async function extractDrop(dt) {
+  const files = [];
+  if (dt.items) {
+    const tasks = [];
+    for (const item of dt.items) {
+      if (item.kind !== 'file') continue;
+      const entry = item.webkitGetAsEntry?.();
+      if (entry?.isDirectory) tasks.push(readDirEntry(entry, files));
+      else { const f = item.getAsFile(); if (f) files.push(f); }
+    }
+    await Promise.all(tasks);
+  } else files.push(...Array.from(dt.files || []));
+  return files;
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   IMAGE PROCESSING
+════════════════════════════════════════════════════════════════════════ */
+function getExt(name) { return name.split('.').pop().toLowerCase(); }
+function getFmt(name) { const e = getExt(name); return e === 'jpeg' ? 'jpg' : e; }
+function fmtBytes(b) { return b < 1024 ? `${b} B` : b < 1048576 ? `${(b/1024).toFixed(1)} KB` : `${(b/1048576).toFixed(1)} MB`; }
+function uid() { return `${Date.now()}-${Math.random().toString(36).slice(2)}`; }
+
+function readResolution(dataUrl) {
+  return new Promise((res, rej) => {
+    const img = new Image();
+    img.onload  = () => res({ w: img.naturalWidth, h: img.naturalHeight });
+    img.onerror = () => rej(new Error('Failed to read image'));
+    img.src = dataUrl;
+  });
+}
+function readDataUrl(file) {
+  return new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onload  = e => res(e.target.result);
+    r.onerror = () => rej(new Error('FileReader failed'));
+    r.readAsDataURL(file);
+  });
+}
+
+/* FIX #4 — sort descending by pixel count, reassign names 1…N */
+function sortAndName(list) {
+  return [...list]
+    .sort((a, b) => b.res - a.res)
+    .map((img, i) => ({ ...img, name: String(i + 1) }));
+}
+
+async function ingestFiles(rawFiles) {
+  const files = Array.from(rawFiles);
+  const valid = files.filter(f => ACCEPTED.has(getExt(f.name)));
+  const unsupported = files.length - valid.length;
+
+  // Deduplication by name+size
+  const keys  = new Set(S.images.map(i => `${i.originalName}::${i.size}`));
+  const fresh  = valid.filter(f => !keys.has(`${f.name}::${f.size}`));
+  const dupes  = valid.length - fresh.length;
+
+  if (!fresh.length) {
+    if (unsupported) toast('No supported images. Use JPG, PNG, or WEBP.', 'error');
+    else if (dupes)  toast('All selected images are already loaded.', 'info');
+    return;
+  }
+
+  showOverlay('Processing Images', 'Reading files…');
+
+  const processed = [];
+  for (let i = 0; i < fresh.length; i++) {
+    const file = fresh[i];
+    setProgress(((i + 1) / fresh.length) * 100, i + 1, fresh.length);
+
+    try {
+      const dataUrl = await readDataUrl(file);
+      const { w, h } = await readResolution(dataUrl);
+
+      processed.push({
+        id:           uid(),
+        originalName: file.name,
+        name:         '',          // assigned after sort (FIX #4)
+        fmt:          getFmt(file.name),
+        size:         file.size,
+        w, h,
+        res:          w * h,
+        isLow:        w < LOW_PX || h < LOW_PX,
+        dataUrl,
+      });
+    } catch { /* skip unreadable files */ }
+  }
+
+  // FIX #4 — auto-sort before rendering
+  S.images   = sortAndName([...S.images, ...processed]);
+  S.showAll  = false;
+  S.filterLow = false;
+
+  hideOverlay();
+  setPhase('EDIT');       // FIX #1 — switch phase, disables global drop
+  updateFiltered();
+  renderToolbar();
+  renderGrid();
+  updateHeaderCount();
+
+  const parts = [`${processed.length} image${processed.length !== 1 ? 's' : ''} added & sorted`];
+  if (dupes)       parts.push(`${dupes} duplicate(s) skipped`);
+  if (unsupported) parts.push(`${unsupported} unsupported ignored`);
+  toast(parts.join(' · '), 'success');
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   REORDER — FIX #2
+   Uses HTML5 drag-and-drop on .card elements only.
+   Only IDs are swapped — no re-reading files.
+   event.stopPropagation() prevents bubble to (disabled) global listeners.
+════════════════════════════════════════════════════════════════════════ */
+let dragSrcId = null;
+let reorderTimer = null;
+
+function initCardDrag() {
+  const cards = D.grid.querySelectorAll('.card');
+
+  cards.forEach(card => {
+    card.addEventListener('dragstart', e => {
+      dragSrcId = card.dataset.id;
+      card.classList.add('is-dragging');
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', card.dataset.id);
+    });
+
+    card.addEventListener('dragend', () => {
+      card.classList.remove('is-dragging');
+      D.grid.querySelectorAll('.drag-over-top, .drag-over-bottom')
+            .forEach(c => c.classList.remove('drag-over-top','drag-over-bottom'));
+      dragSrcId = null;
+    });
+
+    card.addEventListener('dragover', e => {
+      if (!dragSrcId || dragSrcId === card.dataset.id) return;
+      e.preventDefault();
+      e.stopPropagation(); // FIX #2 — never bubbles to global drop handler
+      D.grid.querySelectorAll('.drag-over-top, .drag-over-bottom')
+            .forEach(c => c.classList.remove('drag-over-top','drag-over-bottom'));
+      // Show indicator on correct half
+      const rect = card.getBoundingClientRect();
+      const mid  = rect.top + rect.height / 2;
+      card.classList.add(e.clientY < mid ? 'drag-over-top' : 'drag-over-bottom');
+    });
+
+    card.addEventListener('dragleave', () => {
+      card.classList.remove('drag-over-top','drag-over-bottom');
+    });
+
+    card.addEventListener('drop', e => {
+      e.preventDefault();
+      e.stopPropagation(); // FIX #2
+      card.classList.remove('drag-over-top','drag-over-bottom');
+      if (!dragSrcId || dragSrcId === card.dataset.id) return;
+
+      // Reorder S.images array by ID (no file re-processing — FIX #2)
+      const fromIdx = S.images.findIndex(i => i.id === dragSrcId);
+      const toIdx   = S.images.findIndex(i => i.id === card.dataset.id);
+      if (fromIdx < 0 || toIdx < 0) return;
+
+      const [moved] = S.images.splice(fromIdx, 1);
+
+      // Insert before or after target based on drag position
+      const rect = card.getBoundingClientRect();
+      const insertIdx = e.clientY < rect.top + rect.height / 2 ? toIdx : toIdx + 1;
+      S.images.splice(Math.min(insertIdx, S.images.length), 0, moved);
+
+      // Reassign names without re-sorting
+      S.images.forEach((img, i) => { img.name = String(i + 1); });
+
+      // Debounced re-render to avoid jank during rapid dragging
+      clearTimeout(reorderTimer);
+      reorderTimer = setTimeout(() => {
+        updateFiltered();
+        renderGrid();
+        updateHeaderCount();
+      }, 80);
+    });
+  });
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   ZIP EXPORT — FIX #3: filenames "1", "2", "3" (no extension)
+════════════════════════════════════════════════════════════════════════ */
+async function exportZip() {
+  if (!S.images.length) return;
+
+  D.exportBtn.disabled = true;
+  D.exportBtn.innerHTML = '<span class="btn-spinner"></span> Zipping…';
+
+  try {
+    const zip    = new JSZip();
+    const folder = zip.folder('pixsort-export');
+
+    for (const img of S.images) {
+      // FIX #3 — folder entry name = only the number, zero extension
+      const entryName = img.name;   // e.g. "1", "2", "3"
+
+      // Convert dataUrl → Blob → ArrayBuffer for JSZip
+      const res  = await fetch(img.dataUrl);
+      const blob = await res.blob();
+      const ab   = await blob.arrayBuffer();
+      folder.file(entryName, ab);
+    }
+
+    const content  = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 6 } });
+    const url      = URL.createObjectURL(content);
+    const a        = document.createElement('a');
+    const ts       = new Date().toISOString().slice(0,10);
+    a.href         = url;
+    a.download     = `pixsort-${ts}.zip`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+
+    toast(`${S.images.length} images exported — no extensions in filenames.`, 'success');
+  } catch (err) {
+    toast('Export failed. Please try again.', 'error');
+    console.error(err);
+  }
+
+  D.exportBtn.disabled = false;
+  D.exportBtn.innerHTML = `
+    <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+    Download ZIP`;
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   RENDER
+════════════════════════════════════════════════════════════════════════ */
+function updateFiltered() {
+  S.filtered = S.filterLow ? S.images.filter(i => i.isLow) : S.images;
+}
+
+function renderToolbar() {
+  const total = S.images.length;
+  const low   = S.images.filter(i => i.isLow).length;
+  D.totalCount.textContent  = total;
+  D.lowResCount.textContent = low;
+  D.lowResStat.style.display  = low > 0 ? '' : 'none';
+  D.filterBtn.style.display   = low > 0 ? '' : 'none';
+  D.filterBtn.setAttribute('aria-pressed', String(S.filterLow));
+  D.filterLbl.textContent     = S.filterLow ? 'Show All' : `Low Res Only (${low})`;
+}
+
+function renderGrid() {
+  D.grid.innerHTML = '';
+
+  const list   = S.showAll ? S.filtered : S.filtered.slice(0, PAGE_SIZE);
+  const hasMore = S.filtered.length > PAGE_SIZE && !S.showAll;
+
+  if (list.length === 0) {
+    D.grid.innerHTML = `
+      <div class="empty">
+        <div class="empty-icon">
+          <svg viewBox="0 0 24 24"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
+        </div>
+        <h3>No low-res images</h3>
+        <p>All images meet the 380 × 380 resolution requirement.</p>
+      </div>`;
+    D.showMoreWrap.style.display = 'none';
+    return;
+  }
+
+  // Reorder hint
+  const hint = document.createElement('div');
+  hint.className  = 'reorder-hint';
+  hint.innerHTML  = `<svg viewBox="0 0 24 24"><polyline points="5 9 2 12 5 15"/><polyline points="19 9 22 12 19 15"/><line x1="2" y1="12" x2="22" y2="12"/></svg> Drag cards to manually reorder`;
+  hint.style.gridColumn = '1 / -1';
+  D.grid.appendChild(hint);
+
+  list.forEach(img => D.grid.appendChild(buildCard(img)));
+
+  // Add-more tile
+  const addTile = document.createElement('div');
+  addTile.className = 'add-tile';
+  addTile.tabIndex  = 0;
+  addTile.setAttribute('role', 'button');
+  addTile.setAttribute('aria-label', 'Add more images');
+  addTile.innerHTML = `
+    <div class="add-tile-icon">
+      <svg viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+    </div>
+    Add more images`;
+  addTile.addEventListener('click', () => D.fileInput.click());
+  addTile.addEventListener('keydown', e => { if (e.key === 'Enter') D.fileInput.click(); });
+  D.grid.appendChild(addTile);
+
+  D.showMoreWrap.style.display  = hasMore ? '' : 'none';
+  D.showMoreCount.textContent   = S.filtered.length;
+
+  // Wire up card drag-to-reorder (FIX #2)
+  initCardDrag();
+}
+
+function buildCard(img) {
+  const card = document.createElement('article');
+  card.className    = `card${img.isLow ? ' low-res' : ''}`;
+  card.dataset.id   = img.id;
+  card.draggable    = true;
+  card.setAttribute('aria-label', `Image ${img.name}: ${img.w}×${img.h}px${img.isLow ? ', low resolution' : ''}`);
+
+  // FIX #3 — card name shows ONLY the number, never the filename or extension
+  card.innerHTML = `
+    <div class="card-thumb">
+      <img src="${img.dataUrl}" alt="Image ${img.name}" loading="lazy" />
+      <div class="card-num">${img.name}</div>
+      ${img.isLow ? `
+        <div class="badge-low">
+          <svg viewBox="0 0 24 24"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+          Low Res
+        </div>` : ''}
+    </div>
+    <div class="card-body">
+      <div class="card-name">${img.name}</div>
+      <div class="card-res">
+        <strong>${img.w} × ${img.h}</strong> px
+        ${img.isLow ? '<span class="card-warn">⚠ Below 380px</span>' : ''}
+      </div>
+      <div class="card-foot">
+        <span class="card-fmt">${img.fmt}</span>
+        <span class="card-size">${fmtBytes(img.size)}</span>
+      </div>
+    </div>`;
+
+  return card;
+}
+
+function updateHeaderCount() {
+  const n = S.images.length;
+  D.imgCount.textContent = `${n} image${n !== 1 ? 's' : ''}`;
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   OVERLAY
+════════════════════════════════════════════════════════════════════════ */
+function showOverlay(title, msg) {
+  D.overlayTitle.textContent = title;
+  D.overlayMsg.textContent   = msg;
+  D.progFill.style.width     = '0%';
+  D.progCount.textContent    = '';
+  D.overlay.classList.add('show');
+}
+function hideOverlay() { D.overlay.classList.remove('show'); }
+function setProgress(pct, cur, total) {
+  D.progFill.style.width  = `${Math.min(100, pct).toFixed(1)}%`;
+  D.progCount.textContent = total ? `${cur} / ${total}` : '';
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   TOAST
+════════════════════════════════════════════════════════════════════════ */
+let toastTimer;
+function toast(msg, type = 'info') {
+  clearTimeout(toastTimer);
+  const icons = {
+    success: `<svg class="t-success" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>`,
+    error:   `<svg class="t-error"   viewBox="0 0 24 24"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>`,
+    info:    `<svg class="t-info"    viewBox="0 0 24 24"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>`,
+  };
+  D.toast.innerHTML = `${icons[type]||icons.info}<span>${msg}</span>`;
+  D.toast.classList.add('show');
+  toastTimer = setTimeout(() => D.toast.classList.remove('show'), 4200);
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   EVENT WIRING
+════════════════════════════════════════════════════════════════════════ */
+// Drop zone interactions (upload phase only)
+D.dropZone.addEventListener('click',   () => D.fileInput.click());
+D.dropZone.addEventListener('keydown', e => { if (e.key === 'Enter') D.fileInput.click(); });
+D.dropZone.addEventListener('dragover',  e => { e.preventDefault(); D.dropZone.classList.add('over'); });
+D.dropZone.addEventListener('dragleave', () => D.dropZone.classList.remove('over'));
+D.dropZone.addEventListener('drop', async e => {
+  e.preventDefault(); D.dropZone.classList.remove('over');
+  const files = await extractDrop(e.dataTransfer);
+  if (files.length) ingestFiles(files);
+});
+
+el('chooseFilesBtn').addEventListener('click',  e => { e.stopPropagation(); D.fileInput.click(); });
+el('chooseFolderBtn').addEventListener('click', e => { e.stopPropagation(); D.folderInput.click(); });
+
+D.fileInput.addEventListener('change', e => {
+  if (e.target.files?.length) ingestFiles(Array.from(e.target.files));
+  e.target.value = '';
+});
+D.folderInput.addEventListener('change', e => {
+  if (e.target.files?.length) ingestFiles(Array.from(e.target.files));
+  e.target.value = '';
+});
+
+// Edit phase toolbar
+D.addMoreBtn.addEventListener('click', () => D.fileInput.click());
+
+D.filterBtn.addEventListener('click', () => {
+  S.filterLow = !S.filterLow;
+  S.showAll   = false;
+  updateFiltered();
+  renderToolbar();
+  renderGrid();
+});
+
+D.exportBtn.addEventListener('click', exportZip);
+
+D.clearBtn.addEventListener('click', () => {
+  if (!confirm(`Clear all ${S.images.length} images?`)) return;
+  S.images = []; S.filtered = []; S.filterLow = false; S.showAll = false;
+  setPhase('UPLOAD');
+  toast('All images cleared.', 'info');
+});
+
+D.showMoreBtn.addEventListener('click', () => {
+  S.showAll = true;
+  renderGrid();
+});
+
+/* ════════════════════════════════════════════════════════════════════════
+   INIT
+════════════════════════════════════════════════════════════════════════ */
+initTheme();
+setPhase('UPLOAD');
+</script>
+</body>
+</html>
